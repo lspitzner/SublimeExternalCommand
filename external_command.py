@@ -178,11 +178,18 @@ class ReplaceTask(ExternalCommandTask):
 
     def task_input(self):
         # grab all the non-empty selections, but if there are none, grab the entire view
-        selections = [region for region in self.view.sel() if not region.empty()]
+        sel = self.view.sel()
+        selections = [region for region in sel if not region.empty()]
         if len(selections) == 0:
             self.regions = [sublime.Region(0, self.view.size())]
+            if len(sel) >= 1:
+                self.restore_pos = sel[0].a
+            else:
+                self.restore_pos = None
+            self.restore_viewport = self.view.viewport_position()
         else:
             self.regions = selections
+            self.restore_pos = None
 
         if self.full_line:
             self.regions = [self.view.full_line(region) for region in self.regions]
@@ -190,7 +197,21 @@ class ReplaceTask(ExternalCommandTask):
         return [self.view.substr(region) for region in self.regions]
 
     def handle_results(self, results):
-        replace_regions(self.view, self.regions, results)
+        replace_regions(self.view, self.regions, results, self.restore_pos)
+        # restore_pos = self.restore_pos
+        # if restore_pos is not None:
+            # self.view.sel().clear()
+            # self.view.sel().add(sublime.Region(restore_pos))
+            # (row, _) = self.view.rowcol(restore_pos)
+            # self.view.show(self.view.text_point(row, 0))
+        restore_viewport = self.restore_viewport
+        if restore_viewport is not None:
+            self.view.set_viewport_position(restore_viewport, False)
+        # if restore_pos is not None:
+        #     self.view.sel().clear()
+        #     self.view.sel().add(sublime.Region(restore_pos))
+        #     self.view.show_at_center(restore_pos)
+
 
 class InsertTask(ExternalCommandTask):
     def __init__(self, *args, **kwargs):
@@ -206,18 +227,25 @@ class InsertTask(ExternalCommandTask):
 # Helper command for putting the output of the external command back into the buffer. The name
 # was picked for the undu menu, not because it describes what this class does.
 class RunExternalCommandCommand(sublime_plugin.TextCommand):
-    def run(self, edit, regions, results):
+    def run(self, edit, regions, results, restore_pos):
         delta = 0
         for region, result in zip(regions, results):
             new_region = sublime.Region(region[0] + delta, region[1] + delta)
-            self.view.erase(edit, new_region)
-            delta += self.view.insert(edit, new_region.begin(), result) - new_region.size()
+            # self.view.erase(edit, new_region)
+            # delta += self.view.insert(edit, new_region.begin(), result) - new_region.size()
+            self.view.replace(edit, new_region, result)
+        if restore_pos is not None:
+            self.view.sel().clear()
+            self.view.sel().add(sublime.Region(restore_pos))
+            # (row, _) = self.view.rowcol(restore_pos)
+            # self.view.show(self.view.text_point(row, 0))
+            # self.view.show_at_center(restore_pos)
 
     def is_visible(self):
         return False
 
-def replace_regions(view, regions, results):
-    view.run_command('run_external_command', {'regions': [(region.begin(), region.end()) for region in regions], 'results': results})
+def replace_regions(view, regions, results, restore_pos):
+    view.run_command('run_external_command', {'regions': [(region.begin(), region.end()) for region in regions], 'results': results, 'restore_pos': restore_pos})
 
 class ExternalCommandManager(sublime_plugin.EventListener):
     tasks = {} # indexed by buffer id, so there can only be one task per buffer at a time
